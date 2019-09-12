@@ -1,0 +1,4 @@
+www.welt.de.            86400   IN      CNAME   welt.de.edgekey.net.
+amp.welt.de.		    86400	IN	    CNAME	amp.up.welt.de.
+flatworld.welt.de.	    86400	IN	    A	    195.244.241.14
+gutscheine.welt.de.     86400   IN      CNAME   a.welt-gutscheine.de.
