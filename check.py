@@ -1,25 +1,28 @@
 import requests
 import sys
+import csv as csv_output
 import urllib3
 import socket
 import dns.resolver
 from dns.rdatatype import *
 from sty import fg, rs
 
-if len(sys.argv) != 3:
-    print('''{}Usage: python {} [FILE] [MY_DOMAIN]{}
+if len(sys.argv) is not 4:
+    print('''{}Usage: python {} [FILE] [MY_DOMAIN] [FORMAT]{}
     [FILE] zone file
     [MY_DOMAIN] treat this domain as 1st party
+    [FORMAT] console | csv (default console)
     '''.format(fg.red, sys.argv[0], fg.rs))
     
     exit(-1)
 
 TIMEOUT = 5.0
-DEBUG=False
-MY_DOMAIN=sys.argv[2]
+DEBUG = False
+MY_DOMAIN = sys.argv[2]
+FORMAT = "console" if sys.argv[3] not in ("console", "csv") else sys.argv[3]
 
+# output_result = getattr(, sys.argv[3])
 def check(proto, domain):
-
     if DEBUG:
         print('Checking {}'.format('{}://{}'.format(proto, domain)))
     checks = list()
@@ -39,7 +42,6 @@ def check(proto, domain):
     return checks
 
 def check_url(url):
-    
     try:
         res = requests.get(url, allow_redirects=False, timeout=TIMEOUT)
         if res.status_code >= 300 and res.status_code < 400:
@@ -146,9 +148,57 @@ def classify_dns_entry(entry):
         return {'entry': entry, 'status': 'nok', 'type': 'DNS ERROR', 'target': domain}
     except dns.resolver.NoAnswer:
         return {'entry': entry, 'status': 'nok', 'type': 'DNS ERROR', 'target': domain}
+    except dns.resolver.NoNameservers:
+        return {'entry': entry, 'status': 'nok', 'type': 'DNS ERROR', 'target': domain}
     except:
         print(f'unhandled error {sys.exc_info()[0].__name__}')
 
+def is_check_not_decent(check):
+    error_codes = ['SSL', 'LOOP', 'ERR', 'TIME']
+
+    return check['http_check'][-1]['code'] in error_codes or check['https_check'][-1]['code'] in error_codes
+
+def csv(output):
+    with open('check.csv', mode='w') as check_file:
+        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=c.QUOTE_MINIMAL)
+        writer.writerow(['Domain', 'Target', 'Http_Check', 'Https_Check'])
+
+        for i in list(filter(lambda x: x['classification']['status'] == 'ok' and is_check_not_decent(x), output)):
+            writer.writerow([
+                i['classification']['entry']['domain'], 
+                i['classification'].get("target", "IP"), 
+                i['http_check'][-1]['code'], 
+                i['https_check'][-1]['code']
+            ])
+
+def console(output):
+    failed = list(filter(lambda x: x['classification']['status'] == 'nok', output))
+    if len(failed) > 0:
+        print("{}Failures:{}                         ".format(fg.red, fg.rs))
+
+    for i in failed:
+        print("{} reason: {}".format(i['classification']['target'], i['classification']['type']))
+
+    first_party = list(filter(lambda x: x['classification']['type'] == '1st party', output))
+    if len(first_party) > 0:
+        print("{}[CNAME] Probably First Party:{}".format(fg.green, fg.rs))
+        
+        for i in first_party:
+            print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
+
+    third_party = list(filter(lambda x: x['classification']['type'] == '3rd party', output))
+    if len(third_party) > 0:
+        print("{}[CNAME] Probably 3rd Party:{}".format(fg.yellow, fg.rs))
+
+        for i in third_party:
+            print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
+
+    probably_ok = list(filter(lambda x: x['classification']['type'] == 'A', output))
+    if len(probably_ok) > 0:
+        print("{}A records:{}".format(fg.da_cyan, fg.rs))
+        
+        for i in probably_ok:
+            print('{}\n{}\n'.format(i['classification']['entry']['domain'], i['pretty']))
 
 # domains = read_zonefile()
 
@@ -169,13 +219,14 @@ else:
     entries = read_zonefile()
 
 output = list()
+output_result = locals()[FORMAT]
 cnt = 0
+
 for entry in entries:
     cnt += 1
     print('Processing {}/{}                   '.format(cnt, len(entries)), end='\r')
     
     classification = classify_dns_entry(entry)
-    
     if DEBUG and cnt == 20:
        break
        
@@ -188,6 +239,8 @@ for entry in entries:
         
         output.append({
             'classification': classification,
+            'http_check': http_checks,
+            'https_check': https_checks,
             'pretty': 'HTTP {}\nHTTPS{}'.format(format_code(http_checks), format_code(https_checks))
         })
     else: 
@@ -195,26 +248,4 @@ for entry in entries:
             'classification': classification
         })
 
-failed = list(filter(lambda x: x['classification']['status'] == 'nok', output))
-if len(failed) > 0:
-    print("{}Failures:{}                         ".format(fg.red, fg.rs))
-for i in failed:
-    print("{} reason: {}".format(i['classification']['target'], i['classification']['type']))
-
-first_party = list(filter(lambda x: x['classification']['type'] == '1st party', output))
-if len(first_party) > 0:
-    print("{}[CNAME] Probably First Party:{}".format(fg.green, fg.rs))
-for i in first_party:
-    print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
-
-third_party = list(filter(lambda x: x['classification']['type'] == '3rd party', output))
-if len(third_party) > 0:
-    print("{}[CNAME] Probably 3rd Party:{}".format(fg.yellow, fg.rs))
-for i in third_party:
-    print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
-
-probably_ok = list(filter(lambda x: x['classification']['type'] == 'A', output))
-if len(probably_ok) > 0:
-    print("{}A records:{}".format(fg.da_cyan, fg.rs))
-for i in probably_ok:
-    print('{}\n{}\n'.format(i['classification']['entry']['domain'], i['pretty']))
+output_result(output)
