@@ -160,7 +160,7 @@ def is_check_not_decent(check):
 
 def csv(output):
     with open('check.csv', mode='w') as check_file:
-        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=c.QUOTE_MINIMAL)
+        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=csv_output.QUOTE_MINIMAL)
         writer.writerow(['Domain', 'Target', 'Http_Check', 'Https_Check'])
 
         for i in list(filter(lambda x: x['classification']['status'] == 'ok' and is_check_not_decent(x), output)):
