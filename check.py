@@ -13,7 +13,7 @@ if len(sys.argv) is not 4:
     [MY_DOMAIN] treat this domain as 1st party
     [FORMAT] console | csv (default console)
     '''.format(fg.red, sys.argv[0], fg.rs))
-    
+
     exit(-1)
 
 TIMEOUT = 5.0
@@ -67,7 +67,7 @@ def check_url(url):
 def format_code(checks):
     out = ""
     for check in checks:
-        code = check['code']    
+        code = check['code']
         if type(code) is str:
             out += ' [{}{}{}]'.format(fg.red, code, fg.rs)
         elif 200 == code:
@@ -98,8 +98,8 @@ def read_zonefile():
 
     with open(filename) as f:
         for line in f.readlines():
-            s = list(filter(lambda x: x != '', line.split()))            
-            
+            s = list(filter(lambda x: x != '', line.split()))
+
             if not len(s) == 5 or s[3] not in ('CNAME', 'A'):
                 continue
 
@@ -109,7 +109,7 @@ def read_zonefile():
             if domain not in seen:
                 seen.add(domain)
                 entries.append(entry)
-            
+
             if DEBUG:
                 print(f'testing {entry}')
     return entries
@@ -124,15 +124,15 @@ def classify_dns_entry(entry):
     '''
     domain = entry['domain']
     typ = entry['type']
-    try: 
+    try:
         for rdataset in dns.resolver.query(domain, typ):
-            
+
             if rdataset.rdtype == CNAME:
                 target = rdataset.target.to_text(omit_final_dot=True)
-                
+
                 if DEBUG:
                     print('{} is aliased to {}'.format(domain, target))
-                
+
                 if MY_DOMAIN in target:
                     return {'entry': entry, 'status': 'ok', 'type': '1st party', 'target': target}
                 else:
@@ -141,7 +141,7 @@ def classify_dns_entry(entry):
                 if DEBUG:
                     print('{} resolved to address {}'.format(domain, rdataset.address))
                 return {'entry': entry, 'status': 'ok', 'type': 'A'}
-            
+
     except dns.resolver.NXDOMAIN:
         if DEBUG:
             print("No such domain {}".format(domain))
@@ -160,14 +160,14 @@ def is_check_not_decent(check):
 
 def csv(output):
     with open('check.csv', mode='w') as check_file:
-        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=c.QUOTE_MINIMAL)
+        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=csv_output.QUOTE_MINIMAL)
         writer.writerow(['Domain', 'Target', 'Http_Check', 'Https_Check'])
 
         for i in list(filter(lambda x: x['classification']['status'] == 'ok' and is_check_not_decent(x), output)):
             writer.writerow([
-                i['classification']['entry']['domain'], 
-                i['classification'].get("target", "IP"), 
-                i['http_check'][-1]['code'], 
+                i['classification']['entry']['domain'],
+                i['classification'].get("target", "IP"),
+                i['http_check'][-1]['code'],
                 i['https_check'][-1]['code']
             ])
 
@@ -182,7 +182,7 @@ def console(output):
     first_party = list(filter(lambda x: x['classification']['type'] == '1st party', output))
     if len(first_party) > 0:
         print("{}[CNAME] Probably First Party:{}".format(fg.green, fg.rs))
-        
+
         for i in first_party:
             print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
 
@@ -196,7 +196,7 @@ def console(output):
     probably_ok = list(filter(lambda x: x['classification']['type'] == 'A', output))
     if len(probably_ok) > 0:
         print("{}A records:{}".format(fg.da_cyan, fg.rs))
-        
+
         for i in probably_ok:
             print('{}\n{}\n'.format(i['classification']['entry']['domain'], i['pretty']))
 
@@ -225,25 +225,25 @@ cnt = 0
 for entry in entries:
     cnt += 1
     print('Processing {}/{}                   '.format(cnt, len(entries)), end='\r')
-    
+
     classification = classify_dns_entry(entry)
     if DEBUG and cnt == 20:
        break
-       
+
     if classification['status'] == 'ok':
 
         domain = entry['domain']
 
         http_checks = check('http', domain)
         https_checks = check('https', domain)
-        
+
         output.append({
             'classification': classification,
             'http_check': http_checks,
             'https_check': https_checks,
             'pretty': 'HTTP {}\nHTTPS{}'.format(format_code(http_checks), format_code(https_checks))
         })
-    else: 
+    else:
         output.append({
             'classification': classification
         })
