@@ -1,6 +1,10 @@
 import requests
 import sys
-import csv as csv_output
+from openpyxl import Workbook
+from openpyxl.formatting import Rule
+from openpyxl.styles import Font, PatternFill, Border
+from openpyxl.styles.differential import DifferentialStyle
+from openpyxl.formatting.rule import ColorScaleRule, CellIsRule, FormulaRule
 import urllib3
 import socket
 import dns.resolver
@@ -15,7 +19,7 @@ if len(sys.argv) is not 4:
     [MY_DOMAIN] treat this domain as 1st party
     [FORMAT] console | csv (default console)
     '''.format(fg.red, sys.argv[0], fg.rs))
-    
+
     exit(-1)
 
 TIMEOUT = 5.0
@@ -23,7 +27,7 @@ DEBUG = False
 MY_DOMAIN = sys.argv[2]
 FORMAT = "console" if sys.argv[3] not in ("console", "csv") else sys.argv[3]
 
-# output_result = getattr(, sys.argv[3])
+
 def check(proto, domain):
     if DEBUG:
         print('Checking {}'.format('{}://{}'.format(proto, domain)))
@@ -40,13 +44,23 @@ def check(proto, domain):
             print('{}Error: check resulted in too many redirects "{}"{}'.format(fg.red, http_check['url'], fg.rs))
             break
         # handling relative URLs
-        next_url = http_check['url']        
+        next_url = http_check['url']
         if urlparse(next_url).scheme == '':
-            prev_url = urlparse(checks[-2]['url'])            
-            next_url = urljoin(prev_url.scheme + '://' + prev_url.netloc, next_url)            
+            if DEBUG:
+                print('check({}, {}) fixing relative URL {}'.format(
+                    proto, domain, next_url), end='')
+            if len(checks) < 2:
+                next_url = urljoin(proto + '://' + domain, next_url)
+            else:
+                prev_url = urlparse(checks[-2]['url'])
+                next_url = urljoin(prev_url.scheme + '://' + prev_url.netloc, next_url)
+            if DEBUG:
+                print(' to {}'.format(next_url))
+
         http_check = check_url(next_url)
         checks.append(http_check)
     return checks
+
 
 def check_url(url):
     try:
@@ -63,7 +77,7 @@ def check_url(url):
         # print(type(e.args[0].reason).__name__)
         # print('vars')
         # print(vars(e.args[0]))
-        return {'code': 'SSL'} #{e.args[0].reason}'}
+        return {'code': 'SSL'}  # {e.args[0].reason}'}
     except requests.exceptions.TooManyRedirects:
         return {'code': 'LOOP'}
     except:
@@ -74,7 +88,7 @@ def check_url(url):
 def format_code(checks):
     out = ""
     for check in checks:
-        code = check['code']    
+        code = check['code']
         if type(code) is str:
             out += ' [{}{}{}]'.format(fg.red, code, fg.rs)
         elif 200 == code:
@@ -105,21 +119,22 @@ def read_zonefile():
 
     with open(filename) as f:
         for line in f.readlines():
-            s = list(filter(lambda x: x != '', line.split()))            
-            
+            s = list(filter(lambda x: x != '', line.split()))
+
             if not len(s) == 5 or s[3] not in ('CNAME', 'A'):
                 continue
 
             # strip the '.' at end
-            entry = {'domain':s[0][:-1], 'type':s[3]}
+            entry = {'domain': s[0][:-1], 'type': s[3]}
             domain = entry['domain']
             if domain not in seen:
                 seen.add(domain)
                 entries.append(entry)
-            
+
             if DEBUG:
                 print(f'testing {entry}')
     return entries
+
 
 def classify_dns_entry(entry):
     '''
@@ -131,15 +146,15 @@ def classify_dns_entry(entry):
     '''
     domain = entry['domain']
     typ = entry['type']
-    try: 
+    try:
         for rdataset in dns.resolver.query(domain, typ):
-            
+
             if rdataset.rdtype == CNAME:
                 target = rdataset.target.to_text(omit_final_dot=True)
-                
+
                 if DEBUG:
                     print('{} is aliased to {}'.format(domain, target))
-                
+
                 if MY_DOMAIN in target:
                     return {'entry': entry, 'status': 'ok', 'type': '1st party', 'target': target}
                 else:
@@ -148,7 +163,9 @@ def classify_dns_entry(entry):
                 if DEBUG:
                     print('{} resolved to address {}'.format(domain, rdataset.address))
                 return {'entry': entry, 'status': 'ok', 'type': 'A'}
-            
+
+            print('Unhandled rdataset.rdtype={} for entry={}'.format(rdataset.rdtype, entry))
+
     except dns.resolver.NXDOMAIN:
         if DEBUG:
             print("No such domain {}".format(domain))
@@ -160,40 +177,75 @@ def classify_dns_entry(entry):
     except:
         print(f'unhandled error {sys.exc_info()[0].__name__}')
 
+
 def is_check_not_decent(check):
     error_codes = ['SSL', 'LOOP', 'ERR', 'TIME']
 
     return check['http_check'][-1]['code'] in error_codes or check['https_check'][-1]['code'] in error_codes
 
+
+def csv_2(fileName: str, output, only_errors: bool):
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['Record name', 'Record type', 'Category', 'HTTP', 'HTTPS', 'HTTP trace', 'HTTPS trace'])
+
+    for i in list(filter(lambda x: x['classification']['status'] == 'nok', output)):
+        ws.append([
+            i['classification']['entry']['domain'],
+            i['classification']['entry']['type'],
+            'Error',
+            i['classification']['type'],
+            i['classification']['type']
+        ])
+
+    if only_errors:
+        filtered_list = list(filter(lambda x: x['classification']['status'] == 'ok' and is_check_not_decent(x), output))
+    else:
+        filtered_list = list(filter(lambda x: x['classification']['status'] == 'ok', output))
+    for i in filtered_list:
+
+        http_paths = [path['url'] if 'url' in path else path['code']
+                      for path in i['http_check']]
+        https_paths = [path['url'] if 'url' in path else path['code']
+                       for path in i['https_check']]
+
+        ws.append([
+            i['classification']['entry']['domain'],
+            i['classification']['entry']['type'],
+            i['classification']['type'],
+            i['http_check'][-1]['code'],
+            i['https_check'][-1]['code'],
+            " -> ".join(http_paths),
+            " -> ".join(https_paths)
+        ])
+    red_fill = PatternFill(bgColor="FFC7CE")
+    green_fill = PatternFill(bgColor="00C700")
+    yellow_fill = PatternFill(bgColor="FED51A")
+
+    ws.conditional_formatting.add('D2:E' + str(ws.max_row), CellIsRule(
+        operator='between', formula=['200', '299'], stopIfTrue=True, fill=green_fill))
+    ws.conditional_formatting.add('D2:E' + str(ws.max_row), CellIsRule(
+        operator='between', formula=['400', '499'], stopIfTrue=True, fill=yellow_fill))
+    ws.conditional_formatting.add('D2:E' + str(ws.max_row), CellIsRule(
+        operator='between', formula=['"A"', '"Z"'], stopIfTrue=True, fill=red_fill))
+
+    ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(
+        operator='==', formula=['"1st party"'], stopIfTrue=True, fill=green_fill))
+    ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(
+        operator='==', formula=['"A"'], stopIfTrue=True, fill=green_fill))
+    ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(
+        operator='==', formula=['"3rd party"'], stopIfTrue=True, fill=yellow_fill))
+    ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(
+        operator='==', formula=['"Error"'], stopIfTrue=True, fill=red_fill))
+
+    wb.save(fileName)
+    print('CSV was saved to {}'.format(fileName))
+
+
 def csv(output):
-    with open('check.csv', mode='w') as check_file:
-        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=csv_output.QUOTE_MINIMAL)
-        writer.writerow(['Record name', 'Record type', 'Category', 'HTTP', 'HTTPS', 'HTTP trace', 'HTTPS trace'])
+    csv_2("all.xlsx", output, only_errors=False)
+    csv_2("errors.xlsx", output, only_errors=True)
 
-        
-        for i in list(filter(lambda x: x['classification']['status'] == 'nok', output)):
-            writer.writerow([
-                i['classification']['entry']['domain'],
-                i['classification']['entry']['type'],
-                'Error',
-                i['classification']['type'], 
-                i['classification']['type']
-            ])
-
-        for i in list(filter(lambda x: x['classification']['status'] == 'ok' and is_check_not_decent(x), output)):
-
-            http_paths  = [path['url'] if 'url' in path else path['code'] for path in i['http_check']]
-            https_paths = [path['url'] if 'url' in path else path['code'] for path in i['https_check']]
-
-            writer.writerow([
-                i['classification']['entry']['domain'],
-                i['classification']['entry']['type'],
-                i['classification']['type'],
-                i['http_check'][-1]['code'], 
-                i['https_check'][-1]['code'],
-                " -> ".join(http_paths),
-                " -> ".join(https_paths)
-            ])
 
 def console(output):
     failed = list(filter(lambda x: x['classification']['status'] == 'nok', output))
@@ -206,7 +258,7 @@ def console(output):
     first_party = list(filter(lambda x: x['classification']['type'] == '1st party', output))
     if len(first_party) > 0:
         print("{}[CNAME] Probably First Party:{}".format(fg.green, fg.rs))
-        
+
         for i in first_party:
             print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
 
@@ -220,25 +272,24 @@ def console(output):
     probably_ok = list(filter(lambda x: x['classification']['type'] == 'A', output))
     if len(probably_ok) > 0:
         print("{}A records:{}".format(fg.da_cyan, fg.rs))
-        
+
         for i in probably_ok:
             print('{}\n{}\n'.format(i['classification']['entry']['domain'], i['pretty']))
 
-# domains = read_zonefile()
 
 # if False:
 if DEBUG:
     entries = list()
     # this is no longer registered
-    entries.append( {'domain':'sterne-1.welt.de', 'type': 'A'} )
+    entries.append({'domain': 'sterne-1.welt.de', 'type': 'A'})
     # all ok
-    entries.append( {'domain':'www.welt.de', 'type': 'A'} )
+    entries.append({'domain': 'www.welt.de', 'type': 'A'})
     # broken CNAME
-    entries.append( {'domain':'aktion.welt.de', 'type': 'CNAME'} )
+    entries.append({'domain': 'aktion.welt.de', 'type': 'CNAME'})
     # redirect
-    entries.append( {'domain':'bmw.welt.de', 'type': 'CNAME'} )
-    entries.append( {'domain':'amp.welt.de', 'type': 'CNAME'} )
-    entries.append( {'domain':'www.beste.welt.de', 'type': 'CNAME'} )
+    entries.append({'domain': 'bmw.welt.de', 'type': 'CNAME'})
+    entries.append({'domain': 'amp.welt.de', 'type': 'CNAME'})
+    entries.append({'domain': 'www.beste.welt.de', 'type': 'CNAME'})
 else:
     entries = read_zonefile()
 
@@ -246,28 +297,28 @@ output = list()
 output_result = locals()[FORMAT]
 cnt = 0
 
-for entry in entries[0:50]:
+for entry in entries:
     cnt += 1
     print('Processing {}/{}                   '.format(cnt, len(entries)), end='\r')
-    
+
     classification = classify_dns_entry(entry)
     if DEBUG and cnt == 20:
-       break
-       
+        break
+
     if classification['status'] == 'ok':
 
         domain = entry['domain']
 
         http_checks = check('http', domain)
         https_checks = check('https', domain)
-        
+
         output.append({
             'classification': classification,
             'http_check': http_checks,
             'https_check': https_checks,
             'pretty': 'HTTP {}\nHTTPS{}'.format(format_code(http_checks), format_code(https_checks))
         })
-    else: 
+    else:
         output.append({
             'classification': classification
         })

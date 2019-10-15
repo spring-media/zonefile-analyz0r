@@ -6,11 +6,13 @@ verify_ssl = true
 [dev-packages]
 pylint = "*"
 rope = "*"
+autopep8 = "*"
 
 [packages]
 requests = "*"
 dnspython = "*"
 sty = "*"
+openpyxl = "*"
 
 [requires]
 python_version = "3.7"
