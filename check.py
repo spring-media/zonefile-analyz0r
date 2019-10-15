@@ -67,7 +67,7 @@ def check_url(url):
 def format_code(checks):
     out = ""
     for check in checks:
-        code = check['code']    
+        code = check['code']
         if type(code) is str:
             out += ' [{}{}{}]'.format(fg.red, code, fg.rs)
         elif 200 == code:
@@ -159,14 +159,18 @@ def is_check_not_decent(check):
     return check['http_check'][-1]['code'] in error_codes or check['https_check'][-1]['code'] in error_codes
 
 def csv(output):
-    with open('check.csv', mode='w') as check_file:
-        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=c.QUOTE_MINIMAL)
-        writer.writerow(['Domain', 'Target', 'Http_Check', 'Https_Check'])
-
+    with open('dist/check.csv', mode='w+') as check_file:
+        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=csv_output.QUOTE_MINIMAL)
+        writer.writerow(['Domain', 'HTTP', "HTTPS", 'Http_Check', 'Https_Check'])
+        
         for i in list(filter(lambda x: x['classification']['status'] == 'ok' and is_check_not_decent(x), output)):
+            http_paths = [path['url'] if "url" in path else "Bad entry" for path in i['http_check']]
+            https_paths = [path['url'] if "url" in path else "Bad entry" for path in i['https_check']]
+
             writer.writerow([
                 i['classification']['entry']['domain'], 
-                i['classification'].get("target", "IP"), 
+                "->".join(http_paths),
+                "->".join(https_paths),
                 i['http_check'][-1]['code'], 
                 i['https_check'][-1]['code']
             ])

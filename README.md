@@ -13,7 +13,8 @@ brew install pipenv
 ```sh
 $ pipenv shell
 $ pipenv install
-$ python check.py
+$ make build
+$ make console/csv
 
 Usage: python check.py [FILE] [MY_DOMAIN]
     [FILE] zone file
