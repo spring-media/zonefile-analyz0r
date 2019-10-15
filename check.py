@@ -6,6 +6,8 @@ import socket
 import dns.resolver
 from dns.rdatatype import *
 from sty import fg, rs
+from urllib.parse import urlparse
+from urllib.parse import urljoin
 
 if len(sys.argv) is not 4:
     print('''{}Usage: python {} [FILE] [MY_DOMAIN] [FORMAT]{}
@@ -34,10 +36,15 @@ def check(proto, domain):
         if DEBUG:
             print('{}Following redirect to {}.{}'.format(fg.red, http_check['url'], fg.rs))
         depth += 1
-        if depth > 5:
+        if depth > 7:
             print('{}Error: check resulted in too many redirects "{}"{}'.format(fg.red, http_check['url'], fg.rs))
             break
-        http_check = check_url(http_check['url'])
+        # handling relative URLs
+        next_url = http_check['url']        
+        if urlparse(next_url).scheme == '':
+            prev_url = urlparse(checks[-2]['url'])            
+            next_url = urljoin(prev_url.scheme + '://' + prev_url.netloc, next_url)            
+        http_check = check_url(next_url)
         checks.append(http_check)
     return checks
 
@@ -160,15 +167,32 @@ def is_check_not_decent(check):
 
 def csv(output):
     with open('check.csv', mode='w') as check_file:
-        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=c.QUOTE_MINIMAL)
-        writer.writerow(['Domain', 'Target', 'Http_Check', 'Https_Check'])
+        writer = csv_output.writer(check_file, delimiter=',', quotechar='"', quoting=csv_output.QUOTE_MINIMAL)
+        writer.writerow(['Record name', 'Record type', 'Category', 'HTTP', 'HTTPS', 'HTTP trace', 'HTTPS trace'])
+
+        
+        for i in list(filter(lambda x: x['classification']['status'] == 'nok', output)):
+            writer.writerow([
+                i['classification']['entry']['domain'],
+                i['classification']['entry']['type'],
+                'Error',
+                i['classification']['type'], 
+                i['classification']['type']
+            ])
 
         for i in list(filter(lambda x: x['classification']['status'] == 'ok' and is_check_not_decent(x), output)):
+
+            http_paths  = [path['url'] if 'url' in path else path['code'] for path in i['http_check']]
+            https_paths = [path['url'] if 'url' in path else path['code'] for path in i['https_check']]
+
             writer.writerow([
-                i['classification']['entry']['domain'], 
-                i['classification'].get("target", "IP"), 
+                i['classification']['entry']['domain'],
+                i['classification']['entry']['type'],
+                i['classification']['type'],
                 i['http_check'][-1]['code'], 
-                i['https_check'][-1]['code']
+                i['https_check'][-1]['code'],
+                " -> ".join(http_paths),
+                " -> ".join(https_paths)
             ])
 
 def console(output):
@@ -222,7 +246,7 @@ output = list()
 output_result = locals()[FORMAT]
 cnt = 0
 
-for entry in entries:
+for entry in entries[0:50]:
     cnt += 1
     print('Processing {}/{}                   '.format(cnt, len(entries)), end='\r')
     
