@@ -28,7 +28,7 @@ if len(sys.argv) is not 3:
     exit(-1)
 
 TIMEOUT = 1.0
-DEBUG = True
+DEBUG = False
 MY_DOMAIN = sys.argv[2]
 
 
