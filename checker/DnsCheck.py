@@ -24,7 +24,7 @@ class DnsCheck:
         if not self.sub_check:
             return '[{}]{}'.format(self.typ, self.domain)
         else:
-            return '[{}]{} -> {}'.format(self.typ, self.domain, self.sub_check.dns_trace())
+            return '[{}]{}\n-> {}'.format(self.typ, self.domain, self.sub_check.dns_trace())
 
     def effective_category(self) -> DnsCategory:
         if not self.sub_check:

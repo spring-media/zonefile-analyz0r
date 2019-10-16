@@ -3,9 +3,10 @@ import requests
 import sys
 from openpyxl import Workbook
 from openpyxl.formatting import Rule
-from openpyxl.styles import Font, PatternFill, Border
+from openpyxl.styles import Font, PatternFill, Border,Alignment
 from openpyxl.styles.differential import DifferentialStyle
 from openpyxl.formatting.rule import ColorScaleRule, CellIsRule, FormulaRule
+from openpyxl.utils import get_column_letter
 import urllib3
 import socket
 import dns.resolver
@@ -27,8 +28,8 @@ if len(sys.argv) is not 4:
 
     exit(-1)
 
-TIMEOUT = 3.0
-DEBUG = False
+TIMEOUT = 1.0
+DEBUG = True
 MY_DOMAIN = sys.argv[2]
 FORMAT = "console" if sys.argv[3] not in ("console", "csv") else sys.argv[3]
 
@@ -49,7 +50,7 @@ def check(proto, domain):
             print('{}Error: check resulted in too many redirects "{}"{}'.format(fg.red, http_check['url'], fg.rs))
             break
         # handling relative URLs
-        next_url = http_check['url']
+        next_url = http_check['redirect']
         if urlparse(next_url).scheme == '':
             if DEBUG:
                 print('check({}, {}) fixing relative URL {}'.format(
@@ -71,9 +72,9 @@ def check_url(url):
     try:
         res = requests.get(url, allow_redirects=False, timeout=TIMEOUT)
         if res.status_code >= 300 and res.status_code < 400:
-            return {'code': res.status_code, 'url': res.headers['Location']}
+            return {'code': res.status_code, 'url': url, 'redirect': res.headers['Location']}
         else:
-            return {'code': res.status_code, 'url': res.url}
+            return {'code': res.status_code, 'url': url}
     except requests.exceptions.Timeout:
         return {'code': 'TIME', 'url': f'timeout after {TIMEOUT} seconds'}
     except requests.exceptions.SSLError:
@@ -220,13 +221,18 @@ def check_dns(entry: DnsCheck) -> DnsCheck:
 def is_check_not_decent(check):
     error_codes = ['SSL', 'LOOP', 'ERR', 'TIME']
 
-    return check['http_check'][-1]['code'] in error_codes or check['https_check'][-1]['code'] in error_codes or check['classification'].effective_category().value >= DnsCategory.third_party.value
+    is_http_error = check['http_check'][-1]['code'] in error_codes
+    is_https_error = check['https_check'][-1]['code'] in error_codes
+    is_dns_error = check['classification'].effective_category().value >= DnsCategory.dns_error.value
+    is_dns_cert_validation = check['classification'].effective_category() == DnsCategory.dns_validation
+
+    return not is_dns_cert_validation and (is_http_error or is_https_error or is_dns_error)
 
 
 def csv_2(fileName: str, output, only_errors: bool):
     wb = Workbook()
     ws = wb.active
-    ws.append(['Record name', 'Record type', 'Category', 'HTTP', 'HTTPS', 'HTTP trace', 'HTTPS trace', 'DNS trace'])
+    ws.append(['Record name', 'Type', 'Category', 'HTTP', 'HTTPS', 'HTTP trace', 'HTTPS trace', 'DNS trace'])
 
     for i in list(filter(lambda x: x['classification'].status != 'ok', output)):
         ws.append([
@@ -238,11 +244,12 @@ def csv_2(fileName: str, output, only_errors: bool):
             '',
             ''
         ])
-
+    
     if only_errors:
         filtered_list = list(filter(lambda x: x['classification'].status == 'ok' and is_check_not_decent(x), output))
     else:
         filtered_list = list(filter(lambda x: x['classification'].status == 'ok', output))
+    
     for i in filtered_list:
 
         http_trace = [path['url'] if 'url' in path else path['code']
@@ -256,23 +263,42 @@ def csv_2(fileName: str, output, only_errors: bool):
             i['classification'].effective_category().name,
             i['http_check'][-1]['code'],
             i['https_check'][-1]['code'],
-            " -> ".join(http_trace),
-            " -> ".join(https_trace),
+            "\n-> ".join(http_trace),
+            "\n-> ".join(https_trace),
             i['classification'].dns_trace()
         ])
+
+    def as_text(value):
+        if value is None:
+            return ""
+        return str(value)
+
+    # auto-size columns
+    for column_cells in ws.columns:
+        for cell in column_cells:            
+            ws[cell.coordinate].alignment = Alignment(wrapText=True)
+            ws[cell.coordinate].alignment = Alignment(wrapText=True)
+            ws[cell.coordinate].alignment = Alignment(wrapText=True)            
+        clumn_max_length = len(max( max(as_text(cell.value).split('\n') for cell in column_cells) ))
+        column_letter = (get_column_letter(column_cells[0].column))
+        if clumn_max_length > 0:
+            ws.column_dimensions[column_letter].width = clumn_max_length + 5
+
     red_fill = PatternFill(bgColor="FFC7CE")
     green_fill = PatternFill(bgColor="00C700")
     yellow_fill = PatternFill(bgColor="FED51A")
 
     ws.conditional_formatting.add('D2:E' + str(ws.max_row), CellIsRule(operator='between', formula=['200', '299'], stopIfTrue=True, fill=green_fill))
     ws.conditional_formatting.add('D2:E' + str(ws.max_row), CellIsRule(operator='between', formula=['400', '499'], stopIfTrue=True, fill=yellow_fill))
+    ws.conditional_formatting.add('D2:E' + str(ws.max_row), CellIsRule(operator='between', formula=['500', '599'], stopIfTrue=True, fill=yellow_fill))
     ws.conditional_formatting.add('D2:E' + str(ws.max_row), CellIsRule(operator='between', formula=['"A"', '"Z"'], stopIfTrue=True, fill=red_fill))
 
     ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(operator='==', formula=['"first_party"'], stopIfTrue=True, fill=green_fill))
     ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(operator='==', formula=['"a_record"'], stopIfTrue=True, fill=green_fill))
     ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(operator='==', formula=['"third_party"'], stopIfTrue=True, fill=yellow_fill))
     ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(operator='==', formula=['"dns_error"'], stopIfTrue=True, fill=red_fill))
-
+    ws.conditional_formatting.add('C2:C' + str(ws.max_row), CellIsRule(operator='==', formula=['"dns_validation"'], stopIfTrue=True, fill=green_fill))
+    
     wb.save(fileName)
     print('CSV was saved to {}'.format(fileName))
 
@@ -314,7 +340,7 @@ def console(output):
 
 if __name__ == '__main__':
     # if False:
-    if False:
+    if DEBUG:
         entries: List[DnsCheck] = list()
         # this is no longer registered
         entries.append(DnsCheck('sterne-1.welt.de', 'A'))
