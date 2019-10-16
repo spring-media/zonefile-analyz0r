@@ -44,3 +44,10 @@ flatworld.welt.de
 HTTP  [301] -> https://www.welt.de/politik/ausland/ [200]
 HTTPS [ERR]
 ```
+
+### Dockerfile Option
+
+```sh
+docker build . -t check
+docker run --rm check zonefile_sample welt.de console
+```
