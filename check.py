@@ -19,11 +19,10 @@ from checker.DnsCheck import DnsCheck
 from checker.DnsCategory import DnsCategory
 from typing import Dict, List, Tuple
 
-if len(sys.argv) is not 4:
+if len(sys.argv) is not 3:
     print('''{}Usage: python {} [FILE] [MY_DOMAIN] [FORMAT]{}
     [FILE] zone file
-    [MY_DOMAIN] treat this domain as 1st party
-    [FORMAT] console | csv (default console)
+    [MY_DOMAIN] treat this domain as 1st party    
     '''.format(fg.red, sys.argv[0], fg.rs))
 
     exit(-1)
@@ -31,7 +30,6 @@ if len(sys.argv) is not 4:
 TIMEOUT = 1.0
 DEBUG = True
 MY_DOMAIN = sys.argv[2]
-FORMAT = "console" if sys.argv[3] not in ("console", "csv") else sys.argv[3]
 
 
 def check(proto, domain):
@@ -308,36 +306,6 @@ def csv(output):
     csv_2("errors.xlsx", output, only_errors=True)
 
 
-def console(output):
-    failed = list(filter(lambda x: x['classification']['status'] == 'nok', output))
-    if len(failed) > 0:
-        print("{}Failures:{}                         ".format(fg.red, fg.rs))
-
-    for i in failed:
-        print("{} reason: {}".format(i['classification']['target'], i['classification']['type']))
-
-    first_party = list(filter(lambda x: x['classification']['type'] == '1st party', output))
-    if len(first_party) > 0:
-        print("{}[CNAME] Probably First Party:{}".format(fg.green, fg.rs))
-
-        for i in first_party:
-            print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
-
-    third_party = list(filter(lambda x: x['classification']['type'] == '3rd party', output))
-    if len(third_party) > 0:
-        print("{}[CNAME] Probably 3rd Party:{}".format(fg.yellow, fg.rs))
-
-        for i in third_party:
-            print('{} -> {}\n{}\n'.format(i['classification']['entry']['domain'], i['classification']['target'], i['pretty']))
-
-    probably_ok = list(filter(lambda x: x['classification']['type'] == 'A', output))
-    if len(probably_ok) > 0:
-        print("{}A records:{}".format(fg.da_cyan, fg.rs))
-
-        for i in probably_ok:
-            print('{}\n{}\n'.format(i['classification']['entry']['domain'], i['pretty']))
-
-
 if __name__ == '__main__':
     # if False:
     if DEBUG:
@@ -391,6 +359,5 @@ if __name__ == '__main__':
             output.append({
                 'classification': classification
             })
-    print("\n")
-    output_result = locals()[FORMAT]
-    output_result(output)
+    print("\n")    
+    csv(output)
